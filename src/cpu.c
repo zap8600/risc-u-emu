@@ -1,6 +1,14 @@
 #include <stdint.h>
 #include "../includes/cpu.h"
 
+#define ANSI_YELLOW  "\x1b[33m"
+#define ANSI_BLUE    "\x1b[31m"
+#define ANSI_RESET   "\x1b[0m"
+
+void print_op(char* s) {
+    printf("%s%s%s", ANSI_BLUE, s, ANSI_RESET);
+}
+
  void cpu_init(CPU *cpu) {
      cpu->regs[0] = 0x00;                    // register x0 hardwired to 0
      cpu->regs[2] = DRAM_BASE + DRAM_SIZE;   // Set stack pointer
@@ -60,4 +68,49 @@ uint32_t shamt(uint32_t inst) {
     // shamt(shift amount) only required for immediate shift instructions
     // shamt[4:5] = imm[5:0]
     return (uint32_t) (imm_I(inst) & 0x1f); // TODO: 0x1f / 0x3f ?
+}
+
+void exec_LUI(CPU* cpu, uint32_t inst) {
+    // LUI places upper 20 bits of U-immediate value to rd
+    cpu->regs[rd(inst)] = (uint64_t)(int64_t)(int32_t)(inst & 0xfffff000);
+    print_op("lui\n");
+}
+
+void exec_ADDI(CPU* cpu, uint32_t inst) {
+    uint64_t imm = imm_I(inst);
+    cpu->regs[rd(inst)] = cpu->regs[rs1(inst)] + (int64_t) imm;
+    print_op("addi\n");
+}
+
+void exec_LD(CPU* cpu, uint32_t inst) {
+    // load 8 byte to rd from address in rs1
+    uint64_t imm = imm_I(inst);
+    uint64_t addr = cpu->regs[rs1(inst)] + (int64_t) imm;
+    cpu->regs[rd(inst)] = (int64_t) cpu_load(cpu, addr, 64);
+    print_op("ld\n");
+}
+
+void exec_SD(CPU* cpu, uint32_t inst) {
+    uint64_t imm = imm_S(inst);
+    uint64_t addr = cpu->regs[rs1(inst)] + (int64_t) imm;
+    cpu_store(cpu, addr, 64, cpu->regs[rs2(inst)]);
+    print_op("sd\n");
+}
+
+void exec_ADD(CPU* cpu, uint32_t inst) {
+    cpu->regs[rd(inst)] =
+        (uint64_t) ((int64_t)cpu->regs[rs1(inst)] + (int64_t)cpu->regs[rs2(inst)]);
+    print_op("add\n");
+}
+
+void exec_SUB(CPU* cpu, uint32_t inst) {
+    cpu->regs[rd(inst)] =
+        (uint64_t) ((int64_t)cpu->regs[rs1(inst)] - (int64_t)cpu->regs[rs2(inst)]);
+    print_op("sub\n");
+}
+
+exec_MUL(CPU* cpu, uint32_t inst) {
+    cpu->regs[rd(inst)] =
+        (uint64_t) ((int64_t)cpu->regs[rs1(inst)] * (int64_t)cpu->regs[rs2(inst)]);
+    print_op("mul\n");
 }

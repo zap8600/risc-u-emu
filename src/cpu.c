@@ -1,9 +1,11 @@
-#include <stdint.h>
+#include <stdio.h>
 #include "../includes/cpu.h"
 
 #define ANSI_YELLOW  "\x1b[33m"
 #define ANSI_BLUE    "\x1b[31m"
 #define ANSI_RESET   "\x1b[0m"
+
+#define ADDR_MISALIGNED(addr) (addr & 0x3)
 
 void print_op(char* s) {
     printf("%s%s%s", ANSI_BLUE, s, ANSI_RESET);
@@ -76,6 +78,38 @@ void exec_LUI(CPU* cpu, uint32_t inst) {
     print_op("lui\n");
 }
 
+void exec_JAL(CPU* cpu, uint32_t inst) {
+    uint64_t imm = imm_J(inst);
+    cpu->regs[rd(inst)] = cpu->pc;
+    /*print_op("JAL-> rd:%ld, pc:%lx\n", rd(inst), cpu->pc);*/
+    cpu->pc = cpu->pc + (int64_t) imm - 4;
+    print_op("jal\n");
+    if (ADDR_MISALIGNED(cpu->pc)) {
+        fprintf(stderr, "JAL pc address misalligned");
+        exit(0);
+    }
+}
+
+void exec_JALR(CPU* cpu, uint32_t inst) {
+    uint64_t imm = imm_I(inst);
+    uint64_t tmp = cpu->pc;
+    cpu->pc = (cpu->regs[rs1(inst)] + (int64_t) imm) & 0xfffffffe;
+    cpu->regs[rd(inst)] = tmp;
+    /*print_op("NEXT -> %#lx, imm:%#lx\n", cpu->pc, imm);*/
+    print_op("jalr\n");
+    if (ADDR_MISALIGNED(cpu->pc)) {
+        fprintf(stderr, "JAL pc address misalligned");
+        exit(0);
+    }
+}
+
+void exec_BEQ(CPU* cpu, uint32_t inst) {
+    uint64_t imm = imm_B(inst);
+    if ((int64_t) cpu->regs[rs1(inst)] == (int64_t) cpu->regs[rs2(inst)])
+        cpu->pc = cpu->pc + (int64_t) imm - 4;
+    print_op("beq\n");
+}
+
 void exec_ADDI(CPU* cpu, uint32_t inst) {
     uint64_t imm = imm_I(inst);
     cpu->regs[rd(inst)] = cpu->regs[rs1(inst)] + (int64_t) imm;
@@ -97,6 +131,12 @@ void exec_SD(CPU* cpu, uint32_t inst) {
     print_op("sd\n");
 }
 
+void exec_ADDI(CPU* cpu, uint32_t inst) {
+    uint64_t imm = imm_I(inst);
+    cpu->regs[rd(inst)] = cpu->regs[rs1(inst)] + (int64_t) imm;
+    print_op("addi\n");
+}
+
 void exec_ADD(CPU* cpu, uint32_t inst) {
     cpu->regs[rd(inst)] =
         (uint64_t) ((int64_t)cpu->regs[rs1(inst)] + (int64_t)cpu->regs[rs2(inst)]);
@@ -114,3 +154,82 @@ exec_MUL(CPU* cpu, uint32_t inst) {
         (uint64_t) ((int64_t)cpu->regs[rs1(inst)] * (int64_t)cpu->regs[rs2(inst)]);
     print_op("mul\n");
 }
+
+void exec_SLTU(CPU* cpu, uint32_t inst) {
+    cpu->regs[rd(inst)] = (cpu->regs[rs1(inst)] < cpu->regs[rs2(inst)])?1:0;
+    print_op("slti\n");
+}
+
+exec_DIVU(CPU* cpu, uint32_t inst) {
+    cpu->regs[rd(inst)] =
+        (uint64_t) (cpu->regs[rs1(inst)] / (int64_t)cpu->regs[rs2(inst)]);
+    print_op("divu\n");
+}
+
+exec_REMU(CPU* cpu, uint32_t inst) {
+    cpu->regs[rd(inst)] =
+        (uint64_t) (cpu->regs[rs1(inst)] % (int64_t)cpu->regs[rs2(inst)]);
+    print_op("remu\n");
+}
+
+void exec_ECALL(CPU* cpu, uint32_t inst) {}
+void exec_EBREAK(CPU* cpu, uint32_t inst) {}
+
+void exec_ECALLBREAK(CPU* cpu, uint32_t inst) {
+    if (imm_I(inst) == 0x0)
+        exec_ECALL(cpu, inst);
+    if (imm_I(inst) == 0x1)
+        exec_EBREAK(cpu, inst);
+    print_op("ecallbreak\n");
+}
+
+int cpu_execute(CPU *cpu, uint32_t inst) {
+    int opcode = inst & 0x7f;           // opcode in bits 6..0
+    int funct3 = (inst >> 12) & 0x7;    // funct3 in bits 14..12
+    int funct7 = (inst >> 25) & 0x7f;   // funct7 in bits 31..25
+
+    cpu->regs[0] = 0;                   // x0 hardwired to 0 at each cycle
+
+    /*printf("%s\n%#.8lx -> Inst: %#.8x <OpCode: %#.2x, funct3:%#x, funct7:%#x> %s",*/
+            /*ANSI_YELLOW, cpu->pc-4, inst, opcode, funct3, funct7, ANSI_RESET); // DEBUG*/
+    printf("%s\n%#.8lx -> %s", ANSI_YELLOW, cpu->pc-4, ANSI_RESET); // DEBUG
+
+    switch (opcode) {
+        case LUI:   exec_LUI(cpu, inst); break;
+
+        case JAL:   exec_JAL(cpu, inst); break;
+        case JALR:  exec_JALR(cpu, inst); break;
+
+        case B_TYPE:
+            switch (funct3) {
+                case BEQ:   exec_BEQ(cpu, inst); break;
+            } break;
+        
+        case LOAD:
+            switch (funct3) {
+                case LD  :  exec_LD(cpu, inst); break;
+            } break;
+        
+        case S_TYPE:
+            switch (funct3) {
+                case SD  :  exec_SD(cpu, inst); break;  
+            } break;
+        
+        case I_TYPE:  
+            switch (funct3) {
+                case ADDI:  exec_ADDI(cpu, inst); break;
+            } break;
+        
+        case R_TYPE:  
+            switch (funct3) {
+                case ADDSUB:
+                    switch (funct7) {
+                        case ADD: exec_ADD(cpu, inst);
+                        case SUB: exec_ADD(cpu, inst);
+                        case MUL: exec_MUL(cpu, inst);
+                    } break;
+                case SLTU: exec_SLTU(cpu, inst); break;
+            } break;
+        
+        case R_TYPE_64:
+            switch (funct3) {
